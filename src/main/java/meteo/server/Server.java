@@ -2,7 +2,7 @@ package meteo.server;
 
 import meteo.logging.Log;
 import meteo.network.UdpTransport;
-import meteo.protocol.JsonCodec;
+import meteo.protocol.BinaryCodec;
 import meteo.protocol.Message;
 import meteo.util.Utils;
 import org.slf4j.Logger;
@@ -20,7 +20,6 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.function.LongSupplier;
 
-// Spracovanie správ a časovačov servera.
 public class Server implements AutoCloseable {
     private final UdpTransport udp;
     private final Logger logger;
@@ -30,11 +29,11 @@ public class Server implements AutoCloseable {
     private boolean running;
     private long sequence;
 
-    public Server(InetSocketAddress bind, JsonCodec codec, Log log) throws SocketException {
+    public Server(InetSocketAddress bind, BinaryCodec codec, Log log) throws SocketException {
         this(bind, codec, log, () -> System.nanoTime() / 1_000_000);
     }
 
-    public Server(InetSocketAddress bind, JsonCodec codec, Log log, LongSupplier clock)
+    public Server(InetSocketAddress bind, BinaryCodec codec, Log log, LongSupplier clock)
             throws SocketException {
         logger = log.logger("SERVER");
         this.clock = clock;
@@ -75,7 +74,7 @@ public class Server implements AutoCloseable {
         udp.send(answer, target, false);
     }
 
-    private synchronized void receive(JsonCodec.Decoded decoded, InetSocketAddress sender) {
+    private synchronized void receive(BinaryCodec.Decoded decoded, InetSocketAddress sender) {
         if (!running) {
             return;
         }
@@ -109,9 +108,7 @@ public class Server implements AutoCloseable {
         switch (message.kind) {
             case DATA -> handleData(message, session);
             case KEEPALIVE_ACK -> handleKeepaliveAck(message, session);
-            default -> {
-                // Ostatné typy správ server v tejto relácii nespracúva.
-            }
+            default -> {}
         }
     }
 
@@ -131,6 +128,7 @@ public class Server implements AutoCloseable {
                 reply(message, Message.Kind.REJECT, 0, 2, sender);
                 return;
             }
+            // reuse the token for a repeated registration
             if (previousSession.registrationSequence == message.seq) {
                 reply(message, Message.Kind.ACK, previousSession.token, 0, sender);
                 return;
@@ -163,6 +161,7 @@ public class Server implements AutoCloseable {
         session.unansweredProbes = 0;
         session.probeSequence = 0;
 
+        // accept a measurement once and acknowledge repeats
         if (previousMeasurements == null) {
             session.acceptedMeasurements.put(message.seq, measurements);
             if (session.acceptedMeasurements.size() > 256) {
@@ -208,7 +207,7 @@ public class Server implements AutoCloseable {
             }
 
             if (!session.monitoring) {
-                // Pri vynechaných ACK musí aj tester vedieť, že server stále pracuje.
+                // keep the session alive while acks are suppressed
                 if (now >= session.nextHeartbeatTime) {
                     sendKeepalive(session, now);
                 }

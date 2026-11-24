@@ -1,7 +1,7 @@
 package meteo.server;
 
 import meteo.logging.Log;
-import meteo.protocol.JsonCodec;
+import meteo.protocol.BinaryCodec;
 import meteo.util.Console;
 import org.slf4j.Logger;
 
@@ -12,7 +12,6 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.file.Path;
 
-// Spustenie a menu servera.
 public class ServerMain {
     public static void main(String[] args) {
         if (args.length > 0) {
@@ -55,7 +54,7 @@ public class ServerMain {
                             if (server != null) {
                                 throw new IllegalArgumentException("Server už beží");
                             }
-                            server = new Server(new InetSocketAddress(bind, port), new JsonCodec(), log);
+                            server = new Server(new InetSocketAddress(bind, port), new BinaryCodec(), log);
                             server.start();
                             System.out.println("Server bol spustený na adrese " + server.address());
                         }
@@ -109,7 +108,7 @@ public class ServerMain {
         String status = running ? "SPUSTENÝ" : "ZASTAVENÝ";
         System.out.printf("""
 
-                SERVER | JSON | %s:%d | %s
+                SERVER | BINARY | %s:%d | %s
                 1 Nastaviť IP a port
                 2 Spustiť
                 3 Zoznam senzorov

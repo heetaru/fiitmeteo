@@ -16,7 +16,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-// Nastavenie SLF4J a Logback pre jeden súbor a voliteľnú konzolu.
+import meteo.protocol.Message;
+import meteo.sensor.Parameter;
+
 public class Log implements AutoCloseable {
     public static final Marker SYSTEM = MarkerFactory.getMarker("SYSTEM");
     public static final Marker MESSAGE = MarkerFactory.getMarker("MESSAGE");
@@ -61,6 +63,31 @@ public class Log implements AutoCloseable {
 
     public Logger logger(String source) {
         return context.getLogger(source);
+    }
+
+    public static String renderMessage(Message message, long crc) {
+        StringBuilder text = new StringBuilder("{\"type\":\"").append(message.kind)
+                .append("\",\"sensor_type\":\"").append(message.sensorType.label)
+                .append("\",\"sensor_id\":\"").append(message.sensorId)
+                .append("\",\"seq\":").append(message.seq);
+
+        if (message.kind != Message.Kind.REGISTER) {
+            text.append(",\"token\":").append(message.token);
+        }
+        if (Message.hasReference(message.kind)) {
+            text.append(",\"ack_for\":").append(message.reference);
+        }
+        if (message.kind == Message.Kind.REJECT) {
+            text.append(",\"reason\":").append(message.reason);
+        }
+
+        for (int index = 0; index < message.values.length; index++) {
+            Parameter parameter = message.sensorType.parameters[index];
+            text.append(",\"").append(parameter.name()).append("\":")
+                    .append(parameter.format(message.values[index]));
+        }
+
+        return text.append(",\"crc\":").append(crc).append('}').toString();
     }
 
     public synchronized void setConsole(boolean enabled) {

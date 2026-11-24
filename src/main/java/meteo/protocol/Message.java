@@ -2,7 +2,6 @@ package meteo.protocol;
 
 import meteo.sensor.SensorType;
 
-// Obsah jednej správy.
 public class Message {
     public static final long MAX_SEQUENCE = 0xffff_ffffL;
 

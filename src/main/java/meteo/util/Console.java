@@ -11,7 +11,6 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.List;
 
-// Čítanie a kontrola vstupu z konzoly.
 public class Console {
     private static final BufferedReader INPUT = new BufferedReader(new InputStreamReader(System.in));
 
@@ -40,7 +39,7 @@ public class Console {
 
     public static InetAddress ip(String prompt) throws IOException {
         String value = line(prompt);
-        // Zadáva sa číselná IP adresa, nie názov počítača.
+        // accept ip addresses only
         boolean ipv4 = value.matches("[0-9]{1,3}(\\.[0-9]{1,3}){3}");
         boolean ipv6 = value.contains(":");
         if (!ipv4 && !ipv6) {

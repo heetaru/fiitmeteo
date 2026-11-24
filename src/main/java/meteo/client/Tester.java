@@ -2,7 +2,7 @@ package meteo.client;
 
 import meteo.logging.Log;
 import meteo.network.UdpTransport;
-import meteo.protocol.JsonCodec;
+import meteo.protocol.BinaryCodec;
 import meteo.protocol.Message;
 import meteo.sensor.SensorType;
 import meteo.util.Utils;
@@ -21,7 +21,6 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.function.LongSupplier;
 
-// Registrácia senzorov, merania a opakovanie správ.
 public class Tester implements AutoCloseable {
     private static final long DATA_INTERVAL_MS = 10_000;
     private static final int MAX_SEND_ATTEMPTS = 3;
@@ -40,12 +39,12 @@ public class Tester implements AutoCloseable {
     private boolean running;
     private long sequence = Utils.initialSequence();
 
-    public Tester(InetSocketAddress bind, InetSocketAddress server, JsonCodec codec, Log log)
+    public Tester(InetSocketAddress bind, InetSocketAddress server, BinaryCodec codec, Log log)
             throws SocketException {
         this(bind, server, codec, log, () -> System.nanoTime() / 1_000_000);
     }
 
-    public Tester(InetSocketAddress bind, InetSocketAddress server, JsonCodec codec, Log log,
+    public Tester(InetSocketAddress bind, InetSocketAddress server, BinaryCodec codec, Log log,
                   LongSupplier clock) throws SocketException {
         this.server = server;
         this.log = log;
@@ -103,12 +102,13 @@ public class Tester implements AutoCloseable {
     }
 
     private void resend(PendingData pendingData, long now) {
+        // resend the original message with a clean checksum
         udp.send(pendingData.message, server, false);
         pendingData.attempts++;
         pendingData.lastSentTime = now;
     }
 
-    private synchronized void receive(JsonCodec.Decoded decoded, InetSocketAddress sender) {
+    private synchronized void receive(BinaryCodec.Decoded decoded, InetSocketAddress sender) {
         if (!running || !sender.equals(server) || !decoded.valid()) {
             return;
         }
@@ -119,6 +119,7 @@ public class Tester implements AutoCloseable {
             return;
         }
 
+        // match the reply to the original sequence
         PendingData pendingData = pending.get(message.reference);
         if (pendingData != null && !pendingData.message.sensorId.equals(sensor.id)) {
             pendingData = null;
@@ -130,9 +131,7 @@ public class Tester implements AutoCloseable {
             case REJECT -> handleReject(sensor, message, pendingData);
             case RETRY -> handleRetry(sensor, message, pendingData, now);
             case KEEPALIVE -> handleKeepalive(sensor, message, now);
-            default -> {
-                // Ostatné správy tester nespracúva.
-            }
+            default -> {}
         }
     }
 
@@ -238,6 +237,7 @@ public class Tester implements AutoCloseable {
                 continue;
             }
 
+            // ack and keepalive both reset this timer
             if (now - sensor.lastServerContactTime >= 30_000) {
                 deactivate(sensor);
                 sensorLogger(sensor).info(Log.SYSTEM,

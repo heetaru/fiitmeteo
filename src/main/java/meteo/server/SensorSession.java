@@ -6,7 +6,6 @@ import meteo.sensor.SensorType;
 import java.net.InetSocketAddress;
 import java.util.LinkedHashMap;
 
-// Stav jedného senzora na serveri.
 public class SensorSession {
     public final SensorType type;
     public final String id;

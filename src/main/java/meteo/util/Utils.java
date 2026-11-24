@@ -4,7 +4,6 @@ import meteo.protocol.Message;
 
 import java.security.SecureRandom;
 
-// Malé spoločné operácie s tokenmi a poradovými číslami protokolu.
 public final class Utils {
     private static final SecureRandom RANDOM = new SecureRandom();
 
@@ -24,12 +23,12 @@ public final class Utils {
     }
 
     public static long initialSequence() {
-        // Čas zachová poradie registrácií aj po rýchlom reštarte testera na rovnakom porte.
+        // use the clock to seed sequences across restarts
         return System.currentTimeMillis() & Message.MAX_SEQUENCE;
     }
 
     public static boolean isNewerSequence(long candidate, long previous) {
-        // Rozdiel modulo 2^32 rozlíši novšiu registráciu aj po pretečení počítadla.
+        // compare sequence numbers across wraparound
         long distance = (candidate - previous) & Message.MAX_SEQUENCE;
         long halfSequenceRange = (Message.MAX_SEQUENCE + 1) / 2;
         return distance > 0 && distance < halfSequenceRange;

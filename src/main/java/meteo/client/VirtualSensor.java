@@ -2,7 +2,6 @@ package meteo.client;
 
 import meteo.sensor.SensorType;
 
-// Stav jedného simulovaného senzora.
 public class VirtualSensor {
     public final SensorType type;
     public final String id;

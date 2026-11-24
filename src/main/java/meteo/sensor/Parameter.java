@@ -2,10 +2,10 @@ package meteo.sensor;
 
 import java.math.BigDecimal;
 
-// Rozsah a počet desatinných miest jedného parametra.
 public record Parameter(String name, int min, int max, int decimals) {
     public int parse(String text) {
         try {
+            // store decimals as scaled integers
             int value = new BigDecimal(text.trim()).movePointRight(decimals).intValueExact();
             validate(value);
             return value;

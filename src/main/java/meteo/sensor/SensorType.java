@@ -2,7 +2,6 @@ package meteo.sensor;
 
 import java.util.Random;
 
-// Typy senzorov a ich merané hodnoty.
 public enum SensorType {
     THERMO("ThermoNode", new Parameter[]{
             new Parameter("temperature", -500, 600, 1),

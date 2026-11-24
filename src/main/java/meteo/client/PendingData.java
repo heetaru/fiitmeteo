@@ -2,11 +2,11 @@ package meteo.client;
 
 import meteo.protocol.Message;
 
-// Správa čakajúca na potvrdenie.
 public class PendingData {
     public final Message message;
 
     public long lastSentTime;
+    // count the original send
     public int attempts = 1;
 
     public PendingData(Message message, long now) {

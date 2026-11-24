@@ -1,7 +1,7 @@
 package meteo.network;
 
 import meteo.logging.Log;
-import meteo.protocol.JsonCodec;
+import meteo.protocol.BinaryCodec;
 import meteo.protocol.Message;
 import org.slf4j.Logger;
 
@@ -13,14 +13,13 @@ import java.net.SocketException;
 import java.util.Arrays;
 import java.util.function.BiConsumer;
 
-// Odosielanie a prijímanie cez jeden UDP socket.
 public class UdpTransport implements AutoCloseable {
     private final DatagramSocket socket;
-    private final JsonCodec codec;
+    private final BinaryCodec codec;
     private final Log log;
     private final Logger logger;
 
-    public UdpTransport(InetSocketAddress bind, JsonCodec codec, Log log, String role)
+    public UdpTransport(InetSocketAddress bind, BinaryCodec codec, Log log, String role)
             throws SocketException {
         this.codec = codec;
         this.log = log;
@@ -38,22 +37,22 @@ public class UdpTransport implements AutoCloseable {
         return (InetSocketAddress) socket.getLocalSocketAddress();
     }
 
-    public void start(BiConsumer<JsonCodec.Decoded, InetSocketAddress> handler) {
+    public void start(BiConsumer<BinaryCodec.Decoded, InetSocketAddress> handler) {
         Thread receiver = new Thread(() -> receiveLoop(handler), logger.getName() + "-receiver");
         receiver.setDaemon(true);
         receiver.start();
     }
 
-    private void receiveLoop(BiConsumer<JsonCodec.Decoded, InetSocketAddress> handler) {
+    private void receiveLoop(BiConsumer<BinaryCodec.Decoded, InetSocketAddress> handler) {
         while (!socket.isClosed()) {
             try {
-                // Jeden bajt navyše umožní odmietnuť paket prekračujúci limit protokolu.
                 byte[] buffer = new byte[2049];
                 DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
                 socket.receive(packet);
-                JsonCodec.Decoded decoded = codec.decode(Arrays.copyOf(buffer, packet.getLength()));
+                // decode only the received bytes
+                BinaryCodec.Decoded decoded = codec.decode(Arrays.copyOf(buffer, packet.getLength()));
                 Logger messageLogger = messageLogger(decoded.message());
-                String text = JsonCodec.render(decoded.message(), decoded.crc());
+                String text = Log.renderMessage(decoded.message(), decoded.crc());
                 if (decoded.valid()) {
                     messageLogger.info(Log.MESSAGE, "Received from {}: {}", packet.getSocketAddress(), text);
                 } else {
@@ -75,8 +74,9 @@ public class UdpTransport implements AutoCloseable {
         Logger messageLogger = messageLogger(message);
         try {
             socket.send(new DatagramPacket(bytes, bytes.length, target));
-            JsonCodec.Decoded decoded = codec.decode(bytes);
-            String text = JsonCodec.render(message, decoded.crc());
+            // log the checksum actually sent
+            BinaryCodec.Decoded decoded = codec.decode(bytes);
+            String text = Log.renderMessage(message, decoded.crc());
             if (decoded.valid()) {
                 messageLogger.info(Log.MESSAGE, "Sent to {}: {}", target, text);
             } else {

@@ -1,7 +1,7 @@
 package meteo.client;
 
 import meteo.logging.Log;
-import meteo.protocol.JsonCodec;
+import meteo.protocol.BinaryCodec;
 import meteo.sensor.SensorType;
 import meteo.util.Console;
 import org.slf4j.Logger;
@@ -13,7 +13,6 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.file.Path;
 
-// Spustenie a menu testera.
 public class TesterMain {
     public static void main(String[] args) {
         if (args.length > 0) {
@@ -76,7 +75,7 @@ public class TesterMain {
                             }
 
                             tester = new Tester(new InetSocketAddress(bindAddress, localPort),
-                                    new InetSocketAddress(serverAddress, serverPort), new JsonCodec(), log);
+                                    new InetSocketAddress(serverAddress, serverPort), new BinaryCodec(), log);
                             tester.start();
                             System.out.println("Tester bol spustený na adrese " + tester.address());
                         }
@@ -118,7 +117,7 @@ public class TesterMain {
 
     private static void printMenu(InetAddress serverAddress, int serverPort, Tester tester) {
         String status = tester == null ? "ZASTAVENÝ" : "SPUSTENÝ";
-        System.out.println("\nTESTER | JSON | server=" + serverAddress.getHostAddress()
+        System.out.println("\nTESTER | BINARY | server=" + serverAddress.getHostAddress()
                 + ":" + serverPort + " | " + status);
         System.out.println("""
                 1 Nastaviť IP a porty
