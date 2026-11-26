@@ -4,6 +4,7 @@ import meteo.logging.Log;
 import meteo.network.UdpTransport;
 import meteo.protocol.BinaryCodec;
 import meteo.protocol.Message;
+import meteo.sensor.SensorType;
 import meteo.util.Utils;
 import org.slf4j.Logger;
 
@@ -21,10 +22,19 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.LongSupplier;
 
 public class Server implements AutoCloseable {
+    private record SensorKey(SensorType type, String id) {
+    }
+
+    private static final class IntegrityState {
+        private long errors;
+        private Long firstErrorTime;
+    }
+
     private final UdpTransport udp;
     private final Logger logger;
     private final LongSupplier clock;
-    private final Map<String, SensorSession> sensors = new LinkedHashMap<>();
+    private final Map<SensorKey, SensorSession> sensors = new LinkedHashMap<>();
+    private final Map<SensorKey, IntegrityState> integrityBySensor = new LinkedHashMap<>();
     private ScheduledExecutorService timer;
     private boolean running;
     private long sequence;
@@ -48,7 +58,6 @@ public class Server implements AutoCloseable {
         if (running) {
             return;
         }
-
         running = true;
         udp.start(this::receive);
         timer = Executors.newSingleThreadScheduledExecutor();
@@ -79,52 +88,61 @@ public class Server implements AutoCloseable {
             return;
         }
 
-        Message message = decoded.message();
-        if (message.kind == Message.Kind.REGISTER) {
-            if (decoded.valid()) {
-                handleRegister(message, sender);
-            }
-            return;
-        }
-
-        SensorSession session = sensors.get(message.sensorId);
-        if (!matchesSession(message, sender, session)) {
-            if (decoded.valid()) {
-                reply(message, Message.Kind.REJECT, message.token, 1, sender);
-            }
-            return;
-        }
-
         if (!decoded.valid()) {
-            if (message.kind == Message.Kind.DATA) {
-                logger.warn(Log.SYSTEM,
-                        "Integrity check failed for {}:{}; retransmission requested",
-                        session.type.label, session.id);
-                reply(message, Message.Kind.RETRY, session.token, 0, sender);
+            if (decoded.corruptedData() != null) {
+                handleCorruptedData(decoded.corruptedData(), sender);
             }
+            return;
+        }
+
+        Message message = decoded.message();
+        SensorKey key = new SensorKey(message.sensorType, message.sensorId);
+        if (message.kind == Message.Kind.REGISTER) {
+            handleRegister(message, sender, key);
+            return;
+        }
+
+        SensorSession session = sensors.get(key);
+        if (session == null || !session.address.equals(sender) || session.token != message.token) {
+            reply(message, Message.Kind.REJECT, message.token, 1, sender);
             return;
         }
 
         switch (message.kind) {
-            case DATA -> handleData(message, session);
+            case DATA -> handleData(message, session, key);
             case KEEPALIVE_ACK -> handleKeepaliveAck(message, session);
             default -> {}
         }
     }
 
-    private boolean matchesSession(Message message, InetSocketAddress sender, SensorSession session) {
-        return session != null
-                && session.type == message.sensorType
-                && session.token == message.token
-                && session.address.equals(sender);
+    private void handleCorruptedData(BinaryCodec.CorruptedData data, InetSocketAddress sender) {
+        SensorKey key = new SensorKey(data.sensorType(), data.sensorId());
+        SensorSession session = sensors.get(key);
+        if (session == null || !session.address.equals(sender)) {
+            return;
+        }
+
+        IntegrityState integrity = integrityBySensor.computeIfAbsent(key, ignored -> new IntegrityState());
+        if (integrity.firstErrorTime == null) {
+            integrity.firstErrorTime = clock.getAsLong();
+        }
+        integrity.errors++;
+        logger.warn(Log.SYSTEM, "Corrupted message from {}: {} (errors:{})",
+                session.type.label, session.id, integrity.errors);
+
+        if (data.token() == session.token && data.sequence() != 0) {
+            Message retry = new Message(Message.Kind.RETRY, session.type, session.id,
+                    nextSequence(), session.token, data.sequence(), 0, new int[0]);
+            udp.send(retry, sender, false);
+        }
     }
 
-    private void handleRegister(Message message, InetSocketAddress sender) {
-        SensorSession previousSession = sensors.get(message.sensorId);
+    private void handleRegister(Message message, InetSocketAddress sender, SensorKey key) {
+        SensorSession previousSession = sensors.get(key);
         long previousToken = 0;
 
         if (previousSession != null) {
-            if (!previousSession.address.equals(sender) || previousSession.type != message.sensorType) {
+            if (!previousSession.address.equals(sender)) {
                 reply(message, Message.Kind.REJECT, 0, 2, sender);
                 return;
             }
@@ -142,12 +160,12 @@ public class Server implements AutoCloseable {
 
         long token = Utils.generateToken(previousToken);
         SensorSession session = new SensorSession(message, sender, token, clock.getAsLong());
-        sensors.put(message.sensorId, session);
+        sensors.put(key, session);
         reply(message, Message.Kind.ACK, token, 0, sender);
         logger.info(Log.SYSTEM, "Registered {}:{}", session.type.label, session.id);
     }
 
-    private void handleData(Message message, SensorSession session) {
+    private void handleData(Message message, SensorSession session, SensorKey key) {
         String measurements = Arrays.toString(message.values);
         String previousMeasurements = session.acceptedMeasurements.get(message.seq);
         if (previousMeasurements != null && !previousMeasurements.equals(measurements)) {
@@ -156,6 +174,12 @@ public class Server implements AutoCloseable {
         }
 
         session.lastDataTime = clock.getAsLong();
+        IntegrityState integrity = integrityBySensor.get(key);
+        if (integrity != null && integrity.firstErrorTime != null) {
+            logger.info(Log.SYSTEM, "Recovered {}:{} after {} ms",
+                    session.type.label, session.id, session.lastDataTime - integrity.firstErrorTime);
+            integrity.firstErrorTime = null;
+        }
         session.idle = false;
         session.monitoring = false;
         session.unansweredProbes = 0;
@@ -237,7 +261,19 @@ public class Server implements AutoCloseable {
     }
 
     public synchronized void suppressAcks(String id, int count) {
-        SensorSession sensor = sensors.get(id);
+        SensorSession sensor = null;
+        for (SensorSession session : sensors.values()) {
+            if ((session.type.label + ":" + session.id).equals(id)) {
+                sensor = session;
+                break;
+            }
+            if (session.id.equals(id)) {
+                if (sensor != null) {
+                    throw new IllegalArgumentException("Zadajte typ a ID senzora vo formáte typ:ID");
+                }
+                sensor = session;
+            }
+        }
         if (sensor == null) {
             throw new IllegalArgumentException("Neznáme ID senzora");
         }
@@ -265,6 +301,7 @@ public class Server implements AutoCloseable {
         }
         udp.close();
         sensors.clear();
+        integrityBySensor.clear();
         logger.info(Log.SYSTEM, "Server stopped");
     }
 }

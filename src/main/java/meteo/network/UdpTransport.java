@@ -51,12 +51,19 @@ public class UdpTransport implements AutoCloseable {
                 socket.receive(packet);
                 // decode only the received bytes
                 BinaryCodec.Decoded decoded = codec.decode(Arrays.copyOf(buffer, packet.getLength()));
-                Logger messageLogger = messageLogger(decoded.message());
-                String text = Log.renderMessage(decoded.message(), decoded.crc());
-                if (decoded.valid()) {
-                    messageLogger.info(Log.MESSAGE, "Received from {}: {}", packet.getSocketAddress(), text);
+                Message message = decoded.message();
+                if (message == null) {
+                    BinaryCodec.CorruptedData data = decoded.corruptedData();
+                    logger.warn(Log.MESSAGE, "Received DATA frim {}: {}:{}",
+                            packet.getSocketAddress(), data.sensorType().label, data.sensorId());
                 } else {
-                    messageLogger.warn(Log.MESSAGE, "Received from {}: {}", packet.getSocketAddress(), text);
+                    Logger messageLogger = messageLogger(message);
+                    String text = Log.renderMessage(message, decoded.crc());
+                    if (decoded.valid()) {
+                        messageLogger.info(Log.MESSAGE, "Received from {}: {}", packet.getSocketAddress(), text);
+                    } else {
+                        messageLogger.warn(Log.MESSAGE, "Received from {}: {}", packet.getSocketAddress(), text);
+                    }
                 }
                 handler.accept(decoded, (InetSocketAddress) packet.getSocketAddress());
             } catch (IOException exception) {

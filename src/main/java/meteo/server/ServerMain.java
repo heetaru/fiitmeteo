@@ -64,7 +64,7 @@ public class ServerMain {
                         }
                         case 4 -> {
                             requireServer(server);
-                            String id = Console.line("ID senzora: ");
+                            String id = Console.line("ID senzora alebo typ:ID: ");
                             int count = Console.integer("Počet vynechaných potvrdení DATA: ",
                                     0, Integer.MAX_VALUE);
                             server.suppressAcks(id, count);

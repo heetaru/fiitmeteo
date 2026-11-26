@@ -21,7 +21,15 @@ public class BinaryCodec {
     private static final int MAX_ID_LENGTH = 16;
     private static final int CRC_BYTES = Integer.BYTES;
 
-    public record Decoded(Message message, boolean valid, long crc) {
+    public record CorruptedData(SensorType sensorType, String sensorId, long sequence, long token) {
+    }
+
+    public record Decoded(Message message, boolean valid, long crc, CorruptedData corruptedData) {
+        public Decoded(Message message, boolean valid, long crc) {
+            this(message, valid, crc, !valid && message.kind == Message.Kind.DATA
+                    ? new CorruptedData(message.sensorType, message.sensorId, message.seq, message.token)
+                    : null);
+        }
     }
 
     private static long crc32(byte[] body) {
@@ -49,7 +57,7 @@ public class BinaryCodec {
 
     public Decoded decode(byte[] packet) {
         int bodyLength = packet.length - CRC_BYTES;
-        if (bodyLength < HEADER_BYTES + 1 + Integer.BYTES) {
+        if (bodyLength < HEADER_BYTES + 1) {
             throw new IllegalArgumentException("Príliš krátka správa");
         }
 
@@ -59,10 +67,38 @@ public class BinaryCodec {
                 .order(ByteOrder.BIG_ENDIAN);
         long receivedChecksum = Integer.toUnsignedLong(checksumBuffer.getInt());
 
-        Message message = decodeBody(body);
-        long expectedChecksum = crc32(body);
+        boolean valid = receivedChecksum == crc32(body);
+        try {
+            return new Decoded(decodeBody(body), valid, receivedChecksum);
+        } catch (IllegalArgumentException exception) {
+            if (!valid) {
+                CorruptedData data = readCorruptedDataHeader(body);
+                if (data != null) {
+                    return new Decoded(null, false, receivedChecksum, data);
+                }
+            }
+            throw exception;
+        }
+    }
 
-        return new Decoded(message, receivedChecksum == expectedChecksum, receivedChecksum);
+    private static CorruptedData readCorruptedDataHeader(byte[] body) {
+        ByteBuffer buffer = ByteBuffer.wrap(body).order(ByteOrder.BIG_ENDIAN);
+        int header = Byte.toUnsignedInt(buffer.get());
+        int idLength = Byte.toUnsignedInt(buffer.get()) + 1;
+        if ((header >>> 5) != DATA_CODE || idLength > MAX_ID_LENGTH
+                || buffer.remaining() < idLength) {
+            return null;
+        }
+
+        SensorType type = sensorType((header >>> 3) & 0b11);
+        String id = new String(body, HEADER_BYTES, idLength, StandardCharsets.US_ASCII);
+        buffer.position(HEADER_BYTES + idLength);
+        if (buffer.remaining() < Integer.BYTES + Long.BYTES) {
+            return new CorruptedData(type, id, 0, 0);
+        }
+        long sequence = Integer.toUnsignedLong(buffer.getInt());
+        long token = buffer.getLong();
+        return new CorruptedData(type, id, sequence, token);
     }
 
     private static int extraBodyBytes(Message.Kind kind, SensorType type) {
